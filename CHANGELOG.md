@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0] - 2026-09-29
+
+### Added
+- **Build a project space from one place**: `memory.py link <space> --path <folder>`
+  and `memory.py unlink --path <folder>`, with no need to open each repo.
+- **Per-space token budget** for the session card: `/memory-budget <tokens>`
+  (150–4000, default 1000). Pinned files, notes and the header all fit inside
+  it; the card never exceeds it.
+- `/memory-status` shows `session_card_tokens`, the card's actual cost here.
+- README: "A space is a project" and a token budget table.
+
 ## [0.1.0] - 2026-09-29
 
 ### Added

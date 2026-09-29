@@ -36,6 +36,12 @@ SKIP_DIRS = {".git", "node_modules", "dist", "build", ".next", "vendor", "venv",
 MAX_DOC_BYTES = 200_000
 MAX_DOCS_PER_REPO = 400
 PINNED_BUDGET = 3500      # characters of pinned rules in the session card (~900 tokens)
+DEFAULT_CARD_TOKENS = 1000  # whole session card; change per space with `memory.py budget <tokens>`
+MIN_CARD_TOKENS, MAX_CARD_TOKENS = 150, 4000
+
+
+def est_tokens(text):
+    return (len(text) + 3) // 4  # rough: ~4 characters per token
 RECENT_NOTES = 6
 MAX_OUT = 6000
 NOTE_KINDS = ("decision", "convention", "rule", "todo", "fact")
@@ -210,6 +216,17 @@ def link(space, start=None, pins=None):
     remember_path(rid, root)
     n = snapshot_docs(s, rid, root)
     return s, rid, n
+
+
+def set_budget(space_name, tokens):
+    tokens = max(MIN_CARD_TOKENS, min(int(tokens), MAX_CARD_TOKENS))
+    path = os.path.join(space_dir(space_name), "space.json")
+    s = load(path)
+    if not s:
+        raise ValueError(f"no space named '{space_name}'")
+    s["card_budget_tokens"], s["updated_at"] = tokens, now_iso()
+    save(path, s)
+    return tokens
 
 
 def unlink(start=None):
@@ -529,9 +546,16 @@ def card(start):
     except Exception:
         pass
     repos = ", ".join(r["name"] for r in s["repos"])
-    lines = [f"Shared memory space '{s['name']}' (repos: {repos}). This repo is one of them, so the rules and "
-             "decisions below apply here too."]
-    budget = PINNED_BUDGET
+    total = int(s.get("card_budget_tokens") or DEFAULT_CARD_TOKENS) * 4  # characters
+    footer = ("Use memory_search to look up specs, rules, past decisions and conversations from ANY repo in this space "
+              "before assuming. Memory is reference and can be out of date: if it conflicts with the current code or "
+              "with what the user asks now, follow the code and the user, and mention the conflict (offer to update "
+              "or forget the old note). When the user agrees on a decision, convention or rule, ask \"Save this to the "
+              f"'{s['name']}' memory?\" and call memory_remember only after they say yes.")
+    header = (f"Shared memory space '{s['name']}' (repos: {repos}). This repo is one of them, so the rules and "
+              "decisions below apply here too.")
+    lines = [header]
+    budget = max(0, min(PINNED_BUDGET * total // (DEFAULT_CARD_TOKENS * 4), total - len(header) - len(footer) - 600))
     for ref in s.get("pinned", []):
         key, _, rel = ref.partition("/")
         try:
@@ -545,12 +569,17 @@ def card(start):
             break
         lines.append(f"--- pinned: {repo_name}/{rel} ---\n{chunk}" + ("\n… (truncated, use memory_read)" if len(text) > len(chunk) else ""))
         budget -= len(chunk)
+    room = total - sum(len(x) + 1 for x in lines) - len(footer) - 40
     ns = [n for n in notes(s["name"]) if n["kind"] in ("decision", "convention", "rule")][:RECENT_NOTES]
-    if ns:
-        lines.append("Recent decisions and conventions:\n" + "\n".join(f"- [{n['kind']}] {clip(n['text'], 220)} ({n['created_at'][:10]})" for n in ns))
-    lines.append("Use memory_search to look up specs, rules, past decisions and conversations from ANY repo in this space "
-                 "before assuming. Memory is reference and can be out of date: if it conflicts with the current code or "
-                 "with what the user asks now, follow the code and the user, and mention the conflict (offer to update "
-                 "or forget the old note). When the user agrees on a decision, convention or rule, ask \"Save this to the "
-                 f"'{s['name']}' memory?\" and call memory_remember only after they say yes.")
-    return "\n".join(lines)
+    note_lines = []
+    for n in ns:
+        line = f"- [{n['kind']}] {clip(n['text'], 220)} ({n['created_at'][:10]})"
+        if room - len(line) < 0:
+            break
+        note_lines.append(line)
+        room -= len(line) + 1
+    if note_lines:
+        lines.append("Recent decisions and conventions:\n" + "\n".join(note_lines))
+    lines.append(footer)
+    text = "\n".join(lines)
+    return text if len(text) <= total else text[: total - 1] + "…"

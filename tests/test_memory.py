@@ -130,4 +130,31 @@ with tempfile.TemporaryDirectory() as t:
     assert json.loads(run(home_a, journal, app, "status"))["paused"] == "until resumed"
     print("PASS  pause (timed and open-ended), resume, conflict rule in card")
 
+    # a "project" space linked entirely from one place with --path, and a hard token budget
+    run(home_a, journal, app, "resume")
+    hub = os.path.join(t, "work", "plugins-hub")
+    os.makedirs(hub)
+    repos = []
+    for name in ("plugin-a", "plugin-b", "plugin-c"):
+        p = os.path.join(t, "work", name)
+        make_repo(p, f"git@github.com:acme/{name}.git", {"RULES.md": f"# {name} rules\n" + ("- keep it simple and tested. " * 600)})
+        repos.append(p)
+    for p in repos:
+        json.loads(run(home_a, journal, hub, "link", "plugins", "RULES.md", "--path", p))
+    st = json.loads(run(home_a, journal, repos[0], "status"))
+    sp = next(x for x in st["spaces"] if x["name"] == "plugins")
+    assert sp["repos"] == [f"github.com/acme/plugin-{c}" for c in "abc"] and len(sp["pinned"]) == 3, sp
+    assert st["session_card_tokens"] <= 1000, st["session_card_tokens"]           # default cap holds with 3 huge pins
+    run(home_a, journal, repos[0], "budget", "300")
+    card = json.loads(run(home_a, journal, repos[0], "start", stdin=json.dumps({"cwd": repos[0]})))["hookSpecificOutput"]["additionalContext"]
+    assert len(card) <= 300 * 4 and "memory_search" in card, (len(card), card[-200:])  # budget respected, tools hint kept
+    assert json.loads(run(home_a, journal, repos[0], "status"))["session_card_tokens"] <= 300
+    out = json.loads(run(home_a, journal, hub, "unlink", "--path", repos[2]))
+    assert out["ok"] and out["space"] == "plugins"
+    st = json.loads(run(home_a, journal, repos[0], "status"))
+    assert len(next(x for x in st["spaces"] if x["name"] == "plugins")["repos"]) == 2
+    big = mcp(home_a, journal, repos[0], [("memory_search", {"query": "simple tested", "limit": 12})])[0]
+    assert len(big) <= 6100, len(big)                                            # tool output capped too
+    print("PASS  project space via --path, token budget (default 1000, custom 300), unlink --path, tool cap")
+
 print("\nAll basivo-memory tests passed.")

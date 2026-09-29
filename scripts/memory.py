@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """basivo-memory command line (also used by the hooks).
 
-  memory.py link <space> [pin ...]   add the current repo to a space (and pin files)
-  memory.py unlink                   remove the current repo from its space
+  memory.py link <space> [pin ...] [--path DIR]   add a repo to a space (default: current folder)
+  memory.py unlink [--path DIR]      remove a repo from its space
+  memory.py budget <tokens> [--space NAME]   cap the session card (150-4000, default 1000)
   memory.py pin <file> / unpin <file>
   memory.py pause [hours] / resume   switch memory off in this repo (e.g. while building something new)
   memory.py status                   spaces, repos, pinned files, note counts (JSON)
@@ -165,17 +166,30 @@ def cmd_mirror(arg):
     print(json.dumps({"ok": ok, "mirror": arg, "sync": results}))
 
 
+def _opt(args, name):
+    """Pull `--name value` out of args. Returns (remaining_args, value or None)."""
+    if name in args:
+        i = args.index(name)
+        if i + 1 >= len(args):
+            sys.exit(f"{name} needs a value")
+        return args[:i] + args[i + 2:], os.path.expanduser(args[i + 1])
+    return list(args), None
+
+
 def cmd_status(start=None):
     s, rid = current_space(start)
     spaces = []
     for sp in core.all_spaces():
         spaces.append({"name": sp["name"], "repos": [r["id"] for r in sp["repos"]], "pinned": sp.get("pinned", []),
+                       "card_budget_tokens": sp.get("card_budget_tokens", core.DEFAULT_CARD_TOKENS),
                        "notes": len(core.notes(sp["name"])),
                        "docs": sum(len((core.load(os.path.join(core.space_dir(sp["name"]), "docs", core.repo_key(r["id"]), "_manifest.json")) or {}).get("files", []))
                                    for r in sp["repos"])})
     cfg = core.config()
     until = core.paused_until(rid)
+    card = core.card(start or os.getcwd()) if s else ""
     print(json.dumps({"this_repo": rid, "this_space": s["name"] if s else None,
+                      "session_card_tokens": core.est_tokens(card),
                       "paused": ("until resumed" if until == -1 else time.strftime("%Y-%m-%d %H:%M", time.localtime(until))) if until else False,
                       "spaces": spaces,
                       "github": cfg.get("github_repo"), "token": bool(cfg.get("github_token")),
@@ -212,12 +226,14 @@ def main(args):
     elif cmd == "end":
         cmd_end()
     elif cmd == "link" and len(args) >= 2:
-        s, rid, n = core.link(args[1], pins=args[2:])
+        rest, path = _opt(args[2:], "--path")
+        s, rid, n = core.link(args[1], start=path, pins=rest)
         sync_background(force=True)
         print(json.dumps({"ok": True, "space": s["name"], "repo": rid, "repos": [r["id"] for r in s["repos"]],
                           "docs_snapshotted": n, "pinned": s.get("pinned", [])}))
     elif cmd == "unlink":
-        s = core.unlink()
+        _, path = _opt(args[1:], "--path")
+        s = core.unlink(start=path)
         sync_background(force=True)
         print(json.dumps({"ok": bool(s), "space": s["name"] if s else None}))
     elif cmd in ("pin", "unpin") and len(args) == 2:
@@ -233,6 +249,12 @@ def main(args):
         rid, _, _ = core.repo_identity()
         core.resume(rid)
         print(json.dumps({"ok": True, "repo": rid, "paused": False}))
+    elif cmd == "budget" and len(args) >= 2:
+        rest, space = _opt(args[1:], "--space")
+        if not space:
+            cur, _ = current_space()
+            space = cur["name"] if cur else sys.exit("not in a space: pass --space <name>")
+        print(json.dumps({"ok": True, "space": space, "card_budget_tokens": core.set_budget(space, rest[0])}))
     elif cmd == "status":
         cmd_status()
     elif cmd == "remember" and len(args) >= 3:

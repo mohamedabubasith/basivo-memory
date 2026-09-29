@@ -16,6 +16,28 @@ In chatbot-app, every session starts with:
 and Claude can search both repos' docs, notes and past conversations on demand.
 ```
 
+## A space is a project
+
+Like a Claude Project, a space groups everything that belongs together. For example:
+
+```
+space "plugins"                         space "chatbot"
+  ├─ basivo-operator                      ├─ chatbot-spec  (rules, plan)
+  ├─ basivo-qa                            └─ chatbot-app   (code)
+  ├─ basivo-journal
+  └─ basivo-memory
+```
+
+Build one from a single session, without opening each repo:
+
+```
+memory.py link plugins RULES.md --path ~/code/basivo-operator
+memory.py link plugins --path ~/code/basivo-qa
+memory.py unlink --path ~/code/basivo-qa        # take one out again
+```
+
+Any number of spaces is fine, but each repo belongs to one space.
+
 ## What's in a space's memory
 
 | Source | What | How it gets there |
@@ -36,6 +58,17 @@ spec repo still sees its rules and docs.
 - a rule: *memory is reference. If it conflicts with the current code or what
   you ask now, Claude follows the code and you, and points out the conflict.*
 
+### Token budget: nothing is dumped into context
+
+| What | When it's used | Cost |
+|---|---|---|
+| **Session card** (pinned rules, recent decisions, one usage rule) | Once per session | **Capped per space, default 1,000 tokens** (`/memory-budget 150…4000`). Pinned files beyond the cap are cut, with a pointer to `memory_read`. |
+| **Search results** | Only when Claude calls `memory_search` | Short snippets, max 12 results, about 1,500 tokens max |
+| **Reading** a doc, note or chat | Only when Claude calls `memory_read` | Only the relevant sections, about 1,500 tokens max |
+| Everything else (all docs, all chats) | **Never loaded automatically** | 0, it stays in the local index |
+
+`/memory-status` shows what the card actually costs in the current repo (`session_card_tokens`).
+
 **Tools** (called only when useful, each returns short snippets):
 
 | Tool | What it does |
@@ -51,11 +84,12 @@ spec repo still sees its rules and docs.
 | Command | What it does |
 |---|---|
 | `/memory-setup <owner/repo>` | Set up sync on this laptop (private GitHub repo and/or Google Drive) |
-| `/memory-link <space> [files to pin]` | Add this repo to a space; offers to pin rule files |
+| `/memory-link <space> [files to pin] [--path DIR]` | Add this repo (or another folder) to a space; offers to pin rule files |
+| `/memory-budget <tokens>` | Cap the session card for this space and show its current cost |
 | `/memory-status` | Spaces, linked repos, pinned files, counts, paused or not |
 | `/memory-pause [hours]` | **Switch memory off here for a while**, e.g. while building a brand-new feature, so old context can't mislead. Keeps the link. |
 | `/memory-resume` | Turn it back on |
-| `/memory-unlink` | Remove this repo from its space: its docs leave search and its pins stop loading, everywhere |
+| `/memory-unlink` | Remove this repo from its space: its docs leave search and its pins stop loading, everywhere (`memory.py unlink --path DIR` for another folder) |
 
 **Too much or outdated context?** Use the lightest fix first:
 1. `memory_forget` an outdated note.
