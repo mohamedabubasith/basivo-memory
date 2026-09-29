@@ -1,0 +1,13 @@
+{
+  "name": "basivo-memory",
+  "version": "0.1.0",
+  "description": "Shared memory across related repos for Claude Code. Group a spec/rules repo and a code repo into one space: Claude in any of them sees the pinned rules and recent decisions, and can search every repo's docs, saved decisions and past conversations. Synced through your private GitHub repo (and optionally Google Drive) with no git, gh or brew.",
+  "author": { "name": "Basivo", "url": "https://basivo.in" },
+  "homepage": "https://github.com/mohamedabubasith/basivo-memory",
+  "repository": "https://github.com/mohamedabubasith/basivo-memory",
+  "license": "MIT",
+  "keywords": ["memory", "context", "multi-repo", "knowledge", "mcp", "rules", "decisions"],
+  "mcpServers": {
+    "memory": { "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run", "mcp_server.py"] }
+  }
+}
