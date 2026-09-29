@@ -108,7 +108,7 @@ def main():
             continue
         if method == "initialize":
             reply(mid, {"protocolVersion": (msg.get("params") or {}).get("protocolVersion", "2025-03-26"),
-                        "capabilities": {"tools": {}}, "serverInfo": {"name": "basivo-memory", "version": "0.2.0"}})
+                        "capabilities": {"tools": {}}, "serverInfo": {"name": "basivo-memory", "version": "0.3.0"}})
         elif method == "tools/list":
             reply(mid, {"tools": TOOLS})
         elif method == "tools/call":

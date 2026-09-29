@@ -23,7 +23,8 @@ def make_repo(path, origin, files):
 
 
 def run(home, journal, cwd, *args, stdin=None):
-    env = {**os.environ, "BASIVO_MEMORY_HOME": home, "BASIVO_JOURNAL_HOME": journal, "BASIVO_MEMORY_NO_BACKGROUND": "1"}
+    env = {**os.environ, "BASIVO_MEMORY_HOME": home, "BASIVO_JOURNAL_HOME": journal, "BASIVO_MEMORY_NO_BACKGROUND": "1",
+           "CLAUDE_CONFIG_DIR": os.path.join(home, "claude")}
     r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "memory.py"), *args], cwd=cwd, env=env,
                        input=stdin, capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, (args, r.stderr)
@@ -156,5 +157,64 @@ with tempfile.TemporaryDirectory() as t:
     big = mcp(home_a, journal, repos[0], [("memory_search", {"query": "simple tested", "limit": 12})])[0]
     assert len(big) <= 6100, len(big)                                            # tool output capped too
     print("PASS  project space via --path, token budget (default 1000, custom 300), unlink --path, tool cap")
+
+
+def transcript(path, sid, cwd, turns):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        for i, (user, bot) in enumerate(turns):
+            ts = f"2026-09-29T10:0{i}:00Z"
+            f.write(json.dumps({"type": "user", "sessionId": sid, "cwd": cwd, "timestamp": ts, "message": {"content": user}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "sessionId": sid, "cwd": cwd, "timestamp": ts,
+                                "message": {"content": [{"type": "text", "text": bot}]}}) + "\n")
+
+
+# conversations saved by basivo-memory itself (no basivo-journal), synced, and skipped when unlinked or paused
+with tempfile.TemporaryDirectory() as t:
+    t = os.path.realpath(t)  # Claude Code names project folders after the real path
+    home_a, home_b, drive, nj = (os.path.join(t, n) for n in ("mem-a", "mem-b", "drive", "no-journal"))
+    spec, app = os.path.join(t, "w", "spec"), os.path.join(t, "w", "app")
+    make_repo(spec, "git@github.com:acme/spec.git", {"RULES.md": "# Rules\n"})
+    make_repo(app, "git@github.com:acme/app.git", {})
+    # a past chat Claude Code already has for the spec repo is imported when the repo is linked
+    old = os.path.join(home_a, "claude", "projects", "".join(c if c.isalnum() else "-" for c in spec), "old.jsonl")
+    transcript(old, "0ld00000-0000-0000-0000-000000000000", spec,
+               [("which payment provider?", "Use Stripe; Razorpay later for India.")])
+    assert json.loads(run(home_a, nj, spec, "link", "shop"))["chats_imported"] == 1
+    run(home_a, nj, app, "link", "shop")
+    # a live session in the app repo: each Stop saves the conversation so far
+    tp = os.path.join(t, "live.jsonl")
+    transcript(tp, "11ve0000-0000-0000-0000-000000000000", app,
+               [("how do we cache product pages?", "Cache them at the CDN for 5 minutes."),
+                ("my password is hunter2secret", "Noted, don't share passwords here.")])
+    run(home_a, nj, app, "checkpoint", stdin=json.dumps({"transcript_path": tp, "cwd": app}))
+    saved = open(os.path.join(home_a, "data", "spaces", "shop", "chats", "11ve0000-0000-0000-0000-000000000000.json")).read()
+    assert "CDN for 5 minutes" in saved and "hunter2secret" not in saved, saved
+    hits = mcp(home_a, nj, spec, [("memory_search", {"query": "cache product pages", "kind": "chat"}),
+                                  ("memory_search", {"query": "payment provider stripe", "kind": "chat"})])
+    assert "cache" in hits[0] and "Stripe" in hits[1], hits
+    ref = [l for l in hits[0].splitlines() if "ref chat:" in l][0].split("ref ")[1]
+    assert "5 minutes" in mcp(home_a, nj, spec, [("memory_read", {"ref": ref})])[0]
+    # second laptop with no basivo-journal still finds the conversation
+    run(home_a, nj, app, "setup", drive)
+    b_app = os.path.join(t, "b", "app")
+    make_repo(b_app, "https://github.com/acme/app", {})
+    run(home_b, nj, b_app, "setup", drive)
+    assert "cache" in mcp(home_b, nj, b_app, [("memory_search", {"query": "cache product pages"})])[0]
+    # paused or unlinked repos don't record; unlinking removes their chats from search
+    run(home_a, nj, app, "pause")
+    tp2 = os.path.join(t, "paused.jsonl")
+    transcript(tp2, "9a05ed00-0000-0000-0000-000000000000", app, [("secret new feature idea", "ok")])
+    run(home_a, nj, app, "checkpoint", stdin=json.dumps({"transcript_path": tp2, "cwd": app}))
+    assert not os.path.exists(os.path.join(home_a, "data", "spaces", "shop", "chats", "9a05ed00-0000-0000-0000-000000000000.json"))
+    run(home_a, nj, app, "resume")
+    run(home_a, nj, spec, "unlink")
+    assert "Stripe" not in mcp(home_a, nj, app, [("memory_search", {"query": "payment provider stripe", "kind": "chat"})])[0]
+    run(home_a, nj, app, "chats", "off")
+    tp3 = os.path.join(t, "off.jsonl")
+    transcript(tp3, "0ff00000-0000-0000-0000-000000000000", app, [("hello", "hi")])
+    run(home_a, nj, app, "checkpoint", stdin=json.dumps({"transcript_path": tp3, "cwd": app}))
+    assert not os.path.exists(os.path.join(home_a, "data", "spaces", "shop", "chats", "0ff00000-0000-0000-0000-000000000000.json"))
+    print("PASS  own conversations: import on link, save on Stop (masked), search/read, sync without journal, pause/unlink/off")
 
 print("\nAll basivo-memory tests passed.")

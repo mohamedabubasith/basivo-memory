@@ -19,5 +19,5 @@ into the chat, and never echo one.**
    4. Run `$M setup <owner/repo>` again. It downloads every space (new laptop = full memory).
 3. Offer the Google Drive backup: `$M mirror auto` (needs Google Drive for desktop).
 4. Offer to link this repo: `/memory-link <space>`.
-5. Say: restart Claude Code so the memory tools load. If basivo-journal is
-   installed and set up, past conversations are searchable too.
+5. Say: restart Claude Code so the memory tools load. Conversations in linked repos
+   are saved and searchable automatically (`memory.py chats off` stops that).

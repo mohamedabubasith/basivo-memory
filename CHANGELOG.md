@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0] - 2026-09-29
+
+### Added
+- **basivo-memory saves conversations itself.** After every reply (Stop hook) the
+  chat so far is saved to the repo's space, secrets masked, and synced. Search
+  and read them with `memory_search` / `memory_read`, from any repo in the space
+  and any laptop. basivo-journal is no longer needed for this (its chats are
+  still searched, without duplicates).
+- Linking a repo imports the past conversations Claude Code still has for it.
+- `memory.py chats on|off` to stop recording on a laptop. Paused and unlinked
+  repos never record, and unlinking removes their chats from search.
+
 ## [0.2.0] - 2026-09-29
 
 ### Added

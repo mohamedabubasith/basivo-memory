@@ -44,7 +44,7 @@ Any number of spaces is fine, but each repo belongs to one space.
 |---|---|---|
 | **Docs** of every linked repo | Markdown and text files (README, `docs/`, specs, rules, `CLAUDE.md`, …), secrets masked | Snapshotted when you link the repo, and refreshed at each session start in that repo |
 | **Notes** | Decisions, conventions, rules, to-dos, facts | Claude asks *"Save this to the 'chatbot' memory?"* and saves only on **yes** |
-| **Conversations** | Your chats in any linked repo | Read from [basivo-journal](https://github.com/mohamedabubasith/basivo-journal), if installed |
+| **Conversations** | Every chat in any linked repo, secrets masked | Saved by basivo-memory after each reply (and past chats Claude Code still has are imported when you link a repo). Chats from [basivo-journal](https://github.com/mohamedabubasith/basivo-journal) are searched too, if installed |
 
 **Doc snapshots travel with the memory**, so a laptop that never cloned the
 spec repo still sees its rules and docs.
@@ -121,8 +121,8 @@ and a free **GitHub** account. **No git, GitHub CLI or Homebrew.**
 snapshot and note comes back. Repos are recognised by their **GitHub URL**, so
 it doesn't matter which folder you clone them into.
 
-**Conversations:** install and set up [basivo-journal](https://github.com/mohamedabubasith/basivo-journal)
-too. Without it, docs and notes still work.
+**Conversations** are saved by basivo-memory itself. basivo-journal is optional
+(it adds activity stats and a dashboard; its chats are searched too).
 
 ## What is stored, and where
 
@@ -130,6 +130,7 @@ too. Without it, docs and notes still work.
 |---|---|
 | `~/.basivo-memory/data/spaces/<space>/space.json` | Repos in the space (by GitHub URL) and the pinned files |
 | `…/docs/<repo>/…` + `_manifest.json` | Doc snapshots (secrets masked) |
+| `…/chats/<session>.json` | Conversations in the space's repos (only what was said, secrets masked) |
 | `…/notes/<id>.json` | One note per file; deleted notes become tombstones so the deletion syncs |
 | `~/.basivo-memory/config.json` | Token, repo, mirror, this laptop's repo folders, pauses (readable only by you) |
 | `~/.basivo-memory/index.db` | Local search index (a cache, rebuilt automatically) |
@@ -144,7 +145,7 @@ python3 tests/test_memory.py
 ```
 
 It runs two repos in one space, a second laptop syncing through a folder,
-forget, unlink and pause.
+forget, unlink, pause, and conversation capture.
 
 Part of the [Basivo plugins](https://github.com/mohamedabubasith/basivo-plugins).
 Made by [Basivo](https://basivo.in).

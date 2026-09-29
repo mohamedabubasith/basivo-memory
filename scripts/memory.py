@@ -14,7 +14,8 @@
   memory.py set-token                save a GitHub token (typed hidden)
   memory.py mirror auto|<folder>|off also keep a copy in Google Drive (or any folder)
   memory.py sync | doctor
-  memory.py start | end              hooks (session start card / sync at end)
+  memory.py chats on|off             save this laptop's conversations in linked repos (default on)
+  memory.py start | checkpoint | end hooks (session card / save the conversation / final sync)
 """
 import json
 import os
@@ -114,9 +115,12 @@ def cmd_start():
     sync_background(force=True)  # push this repo's refreshed doc snapshot
 
 
-def cmd_end():
-    _hook_input()
-    sync_background(force=True)
+def cmd_checkpoint(final=False):
+    """Stop/SessionEnd hook: save the conversation so far to the repo's space, then sync."""
+    hook = _hook_input()
+    saved = core.save_chat(hook.get("transcript_path"), hook.get("cwd"))
+    if saved or final:
+        sync_background(force=final)
 
 
 def cmd_setup(target):
@@ -223,14 +227,18 @@ def main(args):
     cmd = args[0] if args else ""
     if cmd == "start":
         cmd_start()
-    elif cmd == "end":
-        cmd_end()
+    elif cmd in ("end", "checkpoint"):
+        cmd_checkpoint(final=cmd == "end")
+    elif cmd == "chats" and args[1:2] in (["on"], ["off"]):
+        core.update_config(record_chat=args[1] == "on")
+        print(json.dumps({"ok": True, "record_chat": args[1] == "on"}))
     elif cmd == "link" and len(args) >= 2:
         rest, path = _opt(args[2:], "--path")
         s, rid, n = core.link(args[1], start=path, pins=rest)
+        chats = core.import_chats(path)
         sync_background(force=True)
         print(json.dumps({"ok": True, "space": s["name"], "repo": rid, "repos": [r["id"] for r in s["repos"]],
-                          "docs_snapshotted": n, "pinned": s.get("pinned", [])}))
+                          "docs_snapshotted": n, "chats_imported": chats, "pinned": s.get("pinned", [])}))
     elif cmd == "unlink":
         _, path = _opt(args[1:], "--path")
         s = core.unlink(start=path)
@@ -294,6 +302,6 @@ if __name__ == "__main__":
     except ValueError as e:
         sys.exit(f"memory: {e}")
     except Exception:
-        if (sys.argv[1:2] or [""])[0] in ("start", "end", "sync"):
+        if (sys.argv[1:2] or [""])[0] in ("start", "end", "checkpoint", "sync"):
             sys.exit(0)  # hooks must never break the session
         raise

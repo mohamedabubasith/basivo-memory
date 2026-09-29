@@ -387,6 +387,109 @@ def _chunks(text, size=1400):
     return out
 
 
+# ---------- conversations (saved by this plugin; basivo-journal chats are read too) ----------
+
+MSG_MAX_CHARS = 6000
+_NOISE = re.compile(r"<(system-reminder|ide_[a-z_]+|local-command-stdout|local-command-caveat|command-message|command-args)>.*?</\1>", re.S)
+CLAUDE_PROJECTS = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"), "projects")
+
+
+def _clean(text):
+    text = _NOISE.sub("", text or "")
+    text = re.sub(r"<command-name>(.*?)</command-name>", r"\1", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) > MSG_MAX_CHARS:
+        text = text[:MSG_MAX_CHARS] + f"\n… [{len(text) - MSG_MAX_CHARS} more characters not stored]"
+    return mask_prose(text)
+
+
+def _content_text(content):
+    if isinstance(content, str):
+        return content
+    return "\n".join(c.get("text", "") for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
+
+
+def parse_transcript(path):
+    """A Claude Code transcript (.jsonl) as {session_id, title, cwd, started_at, messages}: only what was said, masked."""
+    sid = cwd = title = started = None
+    msgs = []
+    try:
+        f = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    with f:
+        for line in f:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            sid, cwd = sid or d.get("sessionId"), cwd or d.get("cwd")
+            started = started or d.get("timestamp")
+            typ, msg = d.get("type"), d.get("message") or {}
+            if typ == "ai-title" and d.get("aiTitle"):
+                title = d["aiTitle"]
+            if d.get("isSidechain"):
+                continue
+            if typ == "user" and (d.get("turnOrigin", (d.get("origin") or {}).get("kind")) == "human"
+                                  or (not d.get("toolUseResult") and isinstance(msg.get("content"), str))):
+                txt = _clean(_content_text(msg.get("content")))
+                if txt:
+                    msgs.append({"role": "user", "ts": d.get("timestamp"), "text": txt})
+            elif typ == "assistant":
+                txt = _content_text(msg.get("content"))
+                if txt.strip():
+                    txt = _clean(txt)
+                    if msgs and msgs[-1]["role"] == "assistant":  # one reply may span several records
+                        msgs[-1]["text"] = (msgs[-1]["text"] + "\n\n" + txt)[: MSG_MAX_CHARS * 2]
+                    else:
+                        msgs.append({"role": "assistant", "ts": d.get("timestamp"), "text": txt})
+    if not sid or not msgs:
+        return None
+    if not title:
+        title = clip(next((m["text"] for m in msgs if m["role"] == "user"), ""), 80)
+    return {"session_id": sid, "title": title, "cwd": cwd, "started_at": started, "messages": msgs}
+
+
+def save_chat(transcript_path, start=None):
+    """Store this session's conversation in its repo's space. Skipped when unlinked, paused or chats are off."""
+    if config().get("record_chat") is False or not transcript_path:
+        return None
+    c = parse_transcript(transcript_path)
+    if not c:
+        return None
+    rid, root, _ = repo_identity(start or c.get("cwd"))
+    s = space_for_repo(rid)
+    if not s or paused_until(rid):
+        return None
+    doc = {"session_id": c["session_id"], "repo": rid, "title": c["title"],
+           "project": os.path.basename(root), "started_at": c["started_at"], "messages": c["messages"]}
+    path = os.path.join(space_dir(s["name"]), "chats", c["session_id"] + ".json")
+    if load(path) == doc:
+        return None
+    save(path, doc)
+    return path
+
+
+def import_chats(start=None):
+    """Save the past conversations Claude Code still has on this machine for a repo (run when it's linked)."""
+    _, root, _ = repo_identity(start)
+    folders = {os.path.join(CLAUDE_PROJECTS, re.sub(r"[^A-Za-z0-9]", "-", r)) for r in (root, os.path.realpath(root))}
+    return sum(1 for d in folders for p in glob.glob(os.path.join(d, "*.jsonl")) if save_chat(p, root))
+
+
+def _chat_files(space):
+    """(path, chat) for every conversation in the space: this plugin's own, then basivo-journal's for the same repos."""
+    ids = {r["id"] for r in space.get("repos", [])}
+    out, seen = [], set()
+    for p in glob.glob(os.path.join(space_dir(space["name"]), "chats", "*.json")):
+        c = load(p)
+        if c and c.get("repo") in ids:
+            out.append((p, c))
+            seen.add(c["session_id"])
+    out += [(p, c) for p, c in _journal_chat_files(space) if c.get("session_id") not in seen]
+    return out
+
+
 def _journal_chat_files(space):
     names = {r["id"].split("/")[-1].lower() for r in space.get("repos", [])}
     names |= {os.path.basename(p).lower() for rid, p in config().get("paths", {}).items()
@@ -404,7 +507,7 @@ def _signature(space):
     for p in glob.glob(os.path.join(space_dir(space["name"]), "**", "*"), recursive=True):
         if os.path.isfile(p):
             items.append((p, os.path.getmtime(p)))
-    for p, _ in _journal_chat_files(space):
+    for p, _ in _journal_chat_files(space):  # own chats are already under space_dir
         items.append((p, os.path.getmtime(p)))
     return hashlib.sha1(json.dumps(sorted(items)).encode()).hexdigest()
 
@@ -440,7 +543,7 @@ def index(space):
                    (name, "note", f"note:{n['id']}", n["kind"] + (" · " + ", ".join(n["tags"]) if n.get("tags") else ""),
                     n["created_at"][:10], n["text"]))
     seen = set()
-    for _, c in _journal_chat_files(space):
+    for _, c in _chat_files(space):
         for i, m in enumerate(c.get("messages") or []):
             h = hashlib.sha1((m.get("text") or "").encode()).hexdigest()
             if not (m.get("text") or "").strip() or (c["session_id"], h) in seen:
@@ -513,7 +616,8 @@ def read(space, ref, query=None):
         return cap(f"{rel}\n\n{text}")
     if ref.startswith("chat:"):
         sid, _, pos = ref[5:].partition("#")
-        for p in glob.glob(os.path.join(JOURNAL_CHATS, "*", "*", sid + ".json")):
+        for p in glob.glob(os.path.join(space_dir(space["name"]), "chats", sid + ".json")) + \
+                glob.glob(os.path.join(JOURNAL_CHATS, "*", "*", sid + ".json")):
             c = load(p) or {}
             msgs = c.get("messages") or []
             i = int(pos or 0)
